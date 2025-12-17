@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+/* Monaco editor container fix */
+.monaco-editor-container {
+  height: 100%;
+  width: 100%;
+}
+
+/* Prevent text selection in UI elements */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Register value styling */
+.register-changed {
+  color: #f44747;
+  font-weight: bold;
+}
+
+.register-unchanged {
+  color: #cccccc;
+}
+
+/* Hex viewer styling */
+.hex-byte {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  letter-spacing: 0.1em;
+}
+
+.hex-byte-zero {
+  color: #858585;
+}
+
+.hex-byte-nonzero {
+  color: #cccccc;
+}
+
+.hex-byte-printable {
+  color: #4ec9b0;
+}
+
+/* Breakpoint gutter marker */
+.breakpoint-marker {
+  background-color: #f44747;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+}
+
+/* Current instruction highlight */
+.current-instruction {
+  background-color: rgba(86, 156, 214, 0.3);
+}

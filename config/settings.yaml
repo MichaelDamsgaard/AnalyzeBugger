@@ -1,0 +1,26 @@
+# AnalyzeBugger Configuration
+
+# Claude AI Integration Mode
+# - "direct": Call Claude API directly (fastest)
+# - "mcp": Route through bip-server MCP tools
+# - "hybrid": Direct for analysis, MCP for debug tools
+claude:
+  mode: "direct"
+
+  direct:
+    api_key_env: "ANTHROPIC_API_KEY"
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 4096
+
+  mcp:
+    server_path: "C:\\Claude\\tools\\bip\\bin\\bip-server.exe"
+
+# Debug Engine
+engine:
+  dll_path: "C:\\Claude\\tools\\bip\\bin\\DebugEngine.dll"
+
+# UI Settings
+ui:
+  theme: "dark"
+  font_size: 12
+  show_hex_uppercase: true
