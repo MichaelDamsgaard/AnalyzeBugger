@@ -29,11 +29,15 @@ Either we KNOW the password through computation, or we state what data is needed
 
 ## Required Capabilities for Full Analysis
 
-- [ ] PKLITE automatic unpacking (TEST1, possibly others)
-- [ ] XOR cipher recognition and reversal
-- [ ] Rolling key detection (ROL/ROR patterns)
-- [ ] DOS INT 21h AH=0Ah buffer analysis
+- [ ] Generic AI unpacker (OEP detection + clean IAT → PE image guaranteed)
+- [ ] Any cipher recognition and reversal (XOR, RC4, custom - doesn't matter)
+- [ ] Key detection (any algorithm - rolling, static, derived - Claude figures it out)
+- [ ] Any buffer analysis (DOS INT 21h, Win32 APIs, custom - irrelevant)
 - [ ] Self-modifying code handling
+
+**Philosophy**: These are NOT checklist items for specific implementations.
+Claude analyzes the ALGORITHM, not pattern-matches known packers/ciphers.
+If it's deterministic, Claude computes it. Period.
 
 ## Notes from TEST4 Analysis (NoviceLevel.txt)
 
