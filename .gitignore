@@ -139,3 +139,8 @@ temp/
 # Keep these in specific directories if needed
 !bin/*.dll
 !bin/*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

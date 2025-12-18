@@ -60,60 +60,7 @@ interface AnalysisData {
   };
 }
 
-// Demo data (in production, comes from bip-server)
-const DEMO_DATA: AnalysisData = {
-  fileInfo: {
-    name: "sample.exe",
-    size: 245760,
-    type: "PE32+ executable",
-    arch: "AMD64",
-    subsystem: "Windows GUI",
-    timestamp: "2024-01-15 08:30:00",
-  },
-  entropy: {
-    overall: 6.82,
-    sections: [
-      { name: ".text", entropy: 7.21, size: 143360, characteristics: ["CODE", "EXECUTE", "READ"] },
-      { name: ".rdata", entropy: 5.45, size: 40960, characteristics: ["INITIALIZED", "READ"] },
-      { name: ".data", entropy: 4.12, size: 20480, characteristics: ["INITIALIZED", "READ", "WRITE"] },
-      { name: ".rsrc", entropy: 3.89, size: 32768, characteristics: ["INITIALIZED", "READ"] },
-      { name: ".reloc", entropy: 5.67, size: 8192, characteristics: ["INITIALIZED", "READ"] },
-    ],
-  },
-  crypto: [
-    { algorithm: "RC4", address: "0x401890", confidence: 0.92, context: "String decryption routine" },
-    { algorithm: "XOR", address: "0x401456", confidence: 0.98, context: "Single-byte XOR (key: 0x5A)" },
-    { algorithm: "Base64", address: "0x401C00", confidence: 0.85, context: "Encoding for C2 data" },
-  ],
-  packer: {
-    name: "UPX",
-    version: "3.96",
-    confidence: 0.85,
-  },
-  compiler: {
-    name: "Microsoft Visual C++",
-    version: "14.0",
-    linker: "14.00",
-  },
-  imports: {
-    total: 47,
-    suspicious: 8,
-    categories: {
-      "Process": 12,
-      "Memory": 8,
-      "File": 9,
-      "Network": 6,
-      "Registry": 5,
-      "Crypto": 3,
-      "Other": 4,
-    },
-  },
-  strings: {
-    total: 234,
-    interesting: 47,
-    encrypted: 23,
-  },
-};
+// No demo data - show empty state when no file loaded
 
 export function AnalysisSidebar() {
   const { result: analysisResult } = useAnalysisStore();
@@ -122,7 +69,7 @@ export function AnalysisSidebar() {
   );
 
   // Use real analysis data when available, otherwise demo data
-  const data = useMemo<AnalysisData>(() => {
+  const data = useMemo<AnalysisData | null>(() => {
     if (analysisResult) {
       const entropy = parseFloat(analysisResult.file_info.entropy);
 
@@ -172,7 +119,7 @@ export function AnalysisSidebar() {
         },
       };
     }
-    return DEMO_DATA;
+    return null;
   }, [analysisResult]);
 
   const toggleSection = (section: string) => {
@@ -186,6 +133,19 @@ export function AnalysisSidebar() {
       return next;
     });
   };
+
+  // Show empty state when no file is loaded
+  if (!data) {
+    return (
+      <div className="h-full flex items-center justify-center bg-bg-primary opacity-50">
+        <div className="text-center p-6">
+          <FileCode className="w-12 h-12 mx-auto mb-3 text-text-secondary opacity-30" />
+          <p className="text-sm text-text-secondary">No file loaded</p>
+          <p className="text-xs text-text-secondary mt-1">Load a binary to see analysis</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-auto bg-bg-primary">

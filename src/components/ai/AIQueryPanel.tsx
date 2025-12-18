@@ -1,8 +1,18 @@
+/**
+ * AI Query Panel - Real Claude Integration
+ *
+ * This panel provides direct access to Claude for binary analysis.
+ * Claude IS the analyzer - this is not a simulation.
+ */
+
 import { useState, useRef, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAnalysisStore } from "../../stores/analysisStore";
+import { askClaude, type ClaudeResponse, type ClaudeAction } from "../../services/claudeService";
+import { ApiKeyForm } from "./ApiKeyForm";
 import {
   MessageSquare, Send, Loader2, Sparkles,
-  Copy, Check, Trash2
+  Copy, Check, Trash2, AlertTriangle, AlertCircle, Info
 } from "lucide-react";
 
 interface QueryMessage {
@@ -12,37 +22,77 @@ interface QueryMessage {
   timestamp: Date;
   codeBlocks?: { address: string; code: string }[];
   highlights?: string[];
+  actions?: ClaudeAction[];
+  findings?: ClaudeResponse["findings"];
+  isError?: boolean;
 }
 
-// Example queries to help users
+// Example queries to help users get started
 const EXAMPLE_QUERIES = [
   "What does this binary do?",
-  "Find the main function",
-  "Are there any suspicious API calls?",
-  "Show me all string references",
-  "What encryption is used?",
-  "Find functions that access the network",
-  "Explain the function at 0x0100",
+  "Find the main function and explain it",
+  "Are there any suspicious patterns?",
+  "What's the password/key?",
+  "Explain the code at the entry point",
   "What MITRE techniques are present?",
-  "Generate a YARA rule for this sample",
-  "Summarize the malware behavior",
+  "Generate a YARA rule",
+  "What system calls does it make?",
 ];
 
 export function AIQueryPanel() {
-  const { result, navigateTo } = useAnalysisStore();
+  const { result, currentAddress, navigateTo, setLabel, setComment } = useAnalysisStore();
   const [messages, setMessages] = useState<QueryMessage[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Check if API key is configured on mount
+  useEffect(() => {
+    invoke<boolean>("has_api_key").then(setHasApiKey).catch(() => setHasApiKey(false));
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Show API key form if no key is configured
+  if (hasApiKey === false) {
+    return <ApiKeyForm onKeySet={() => setHasApiKey(true)} />;
+  }
+
+  // Apply actions from Claude's response
+  const applyActions = (actions: ClaudeAction[]) => {
+    for (const action of actions) {
+      switch (action.type) {
+        case "navigate":
+          if (action.address) navigateTo(action.address);
+          break;
+        case "label":
+          if (action.address && action.name) {
+            setLabel(action.address, action.name, "function");
+          }
+          break;
+        case "comment":
+          if (action.address && action.value) {
+            setComment(action.address, action.value);
+          }
+          break;
+      }
+    }
+  };
+
   const processQuery = async (query: string) => {
-    if (!query.trim() || !result) return;
+    console.log("[AIQueryPanel] processQuery called with:", query);
+    console.log("[AIQueryPanel] result exists:", !!result);
+    console.log("[AIQueryPanel] isProcessing:", isProcessing);
+
+    if (!query.trim() || !result) {
+      console.log("[AIQueryPanel] Early return - empty query or no result");
+      return;
+    }
 
     // Add user message
     const userMsg: QueryMessage = {
@@ -55,20 +105,40 @@ export function AIQueryPanel() {
     setInput("");
     setIsProcessing(true);
 
-    // Generate AI response based on query and analysis data
-    // In production, this would call Claude API with full context
-    const response = await generateAIResponse(query, result);
+    try {
+      // Call REAL Claude API via Tauri backend
+      console.log("[AIQueryPanel] Calling askClaude...");
+      const response = await askClaude(query, result, currentAddress || undefined);
+      console.log("[AIQueryPanel] Response received:", response);
 
-    const assistantMsg: QueryMessage = {
-      id: Date.now() + 1,
-      type: "assistant",
-      content: response.text,
-      timestamp: new Date(),
-      codeBlocks: response.codeBlocks,
-      highlights: response.highlights
-    };
-    setMessages(prev => [...prev, assistantMsg]);
-    setIsProcessing(false);
+      const assistantMsg: QueryMessage = {
+        id: Date.now() + 1,
+        type: "assistant",
+        content: response.text,
+        timestamp: new Date(),
+        highlights: response.highlights,
+        actions: response.actions,
+        findings: response.findings,
+        isError: false
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+
+      // Apply any actions Claude suggested
+      if (response.actions && response.actions.length > 0) {
+        applyActions(response.actions);
+      }
+    } catch (error) {
+      const errorMsg: QueryMessage = {
+        id: Date.now() + 1,
+        type: "assistant",
+        content: `Error: ${error}`,
+        timestamp: new Date(),
+        isError: true
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -91,8 +161,8 @@ export function AIQueryPanel() {
       <div className="h-full flex items-center justify-center text-text-secondary">
         <div className="text-center">
           <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-50" />
-          <p className="text-sm">AI Query Assistant</p>
-          <p className="text-xs mt-1">Analyze a file to ask questions</p>
+          <p className="text-sm font-medium">Claude Analysis Interface</p>
+          <p className="text-xs mt-1">Load a binary to begin analysis</p>
         </div>
       </div>
     );
@@ -105,8 +175,8 @@ export function AIQueryPanel() {
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-accent-blue" />
           <span className="text-sm font-medium">Ask Claude</span>
-          <span className="px-1.5 py-0.5 text-[10px] bg-accent-blue/20 text-accent-blue rounded">
-            Natural Language
+          <span className="px-1.5 py-0.5 text-[10px] bg-accent-green/20 text-accent-green rounded">
+            Live API
           </span>
         </div>
         {messages.length > 0 && (
@@ -120,12 +190,30 @@ export function AIQueryPanel() {
         )}
       </div>
 
+      {/* Context indicator */}
+      <div className="px-3 py-1.5 bg-bg-tertiary border-b border-border text-[10px] text-text-secondary">
+        <span className="text-accent-purple">{result.file_info.name}</span>
+        <span className="mx-2">|</span>
+        <span>{result.file_info.arch}</span>
+        <span className="mx-2">|</span>
+        <span>{result.instruction_count} instructions</span>
+        {currentAddress && (
+          <>
+            <span className="mx-2">|</span>
+            <span className="text-accent-blue">Focus: {currentAddress}</span>
+          </>
+        )}
+      </div>
+
       {/* Messages area */}
       <div className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-text-secondary">
-            <Sparkles className="w-8 h-8 mb-3 opacity-50" />
-            <p className="text-sm font-medium mb-4">Ask anything about this binary</p>
+            <Sparkles className="w-8 h-8 mb-3 opacity-50 text-accent-purple" />
+            <p className="text-sm font-medium mb-2">Claude Binary Analyst</p>
+            <p className="text-xs text-center max-w-xs mb-4">
+              I'm connected and ready to analyze. Ask me anything about this binary.
+            </p>
             <div className="grid grid-cols-2 gap-2 max-w-md">
               {EXAMPLE_QUERIES.slice(0, 6).map((query, idx) => (
                 <button
@@ -145,15 +233,44 @@ export function AIQueryPanel() {
               className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[85%] rounded-lg p-3 ${
+                className={`max-w-[90%] rounded-lg p-3 ${
                   msg.type === "user"
                     ? "bg-accent-blue/20 text-text-primary"
+                    : msg.isError
+                    ? "bg-accent-red/20 border border-accent-red/30"
                     : "bg-bg-tertiary"
                 }`}
               >
+                {/* Findings badges */}
+                {msg.findings && msg.findings.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {msg.findings.map((finding, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
+                          finding.type === "critical"
+                            ? "bg-accent-red/20 text-accent-red"
+                            : finding.type === "warning"
+                            ? "bg-accent-yellow/20 text-accent-yellow"
+                            : "bg-accent-blue/20 text-accent-blue"
+                        }`}
+                      >
+                        {finding.type === "critical" ? (
+                          <AlertCircle className="w-3 h-3" />
+                        ) : finding.type === "warning" ? (
+                          <AlertTriangle className="w-3 h-3" />
+                        ) : (
+                          <Info className="w-3 h-3" />
+                        )}
+                        {finding.title}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* Message content */}
                 <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                  {msg.content}
+                  {formatMarkdown(msg.content)}
                 </div>
 
                 {/* Code blocks */}
@@ -187,10 +304,11 @@ export function AIQueryPanel() {
                   </div>
                 )}
 
-                {/* Highlighted addresses */}
+                {/* Highlighted addresses - clickable */}
                 {msg.highlights && msg.highlights.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {msg.highlights.map((addr, idx) => (
+                    <span className="text-[10px] text-text-secondary mr-1">Jump to:</span>
+                    {msg.highlights.slice(0, 10).map((addr, idx) => (
                       <button
                         key={idx}
                         onClick={() => navigateTo(addr)}
@@ -199,6 +317,18 @@ export function AIQueryPanel() {
                         {addr}
                       </button>
                     ))}
+                    {msg.highlights.length > 10 && (
+                      <span className="text-[10px] text-text-secondary">
+                        +{msg.highlights.length - 10} more
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Actions applied */}
+                {msg.actions && msg.actions.length > 0 && (
+                  <div className="mt-2 text-[10px] text-accent-green">
+                    Applied {msg.actions.length} action(s)
                   </div>
                 )}
 
@@ -215,8 +345,8 @@ export function AIQueryPanel() {
         {isProcessing && (
           <div className="flex justify-start">
             <div className="bg-bg-tertiary rounded-lg p-3 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-accent-blue" />
-              <span className="text-sm text-text-secondary">Analyzing...</span>
+              <Loader2 className="w-4 h-4 animate-spin text-accent-purple" />
+              <span className="text-sm text-text-secondary">Claude is analyzing...</span>
             </div>
           </div>
         )}
@@ -231,14 +361,14 @@ export function AIQueryPanel() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about this binary..."
+            placeholder="Ask Claude about this binary..."
             disabled={isProcessing}
-            className="flex-1 px-3 py-2 text-sm bg-bg-primary border border-border rounded-lg focus:outline-none focus:border-accent-blue disabled:opacity-50"
+            className="flex-1 px-3 py-2 text-sm bg-bg-primary border border-border rounded-lg focus:outline-none focus:border-accent-purple disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={isProcessing || !input.trim()}
-            className="p-2 bg-accent-blue/20 text-accent-blue rounded-lg hover:bg-accent-blue/30 disabled:opacity-50 transition-colors"
+            className="p-2 bg-accent-purple/20 text-accent-purple rounded-lg hover:bg-accent-purple/30 disabled:opacity-50 transition-colors"
           >
             <Send className="w-4 h-4" />
           </button>
@@ -248,176 +378,29 @@ export function AIQueryPanel() {
   );
 }
 
-// Generate AI response based on query
-// In production, this calls Claude API with full binary context
-async function generateAIResponse(
-  query: string,
-  result: any
-): Promise<{ text: string; codeBlocks?: { address: string; code: string }[]; highlights?: string[] }> {
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500));
+// Simple markdown formatting
+function formatMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|```[\s\S]*?```)/g);
 
-  const lowerQuery = query.toLowerCase();
-
-  // Pattern matching for common queries
-  if (lowerQuery.includes("what does") && lowerQuery.includes("do")) {
-    const arch = result.file_info.arch;
-    const isPacked = result.file_info.is_packed;
-    const hasNet = result.iocs?.urls?.length > 0 || result.iocs?.ips?.length > 0;
-    const hasCrypto = result.crypto?.count > 0;
-
-    let behavior = `This is a ${arch} binary`;
-    if (isPacked) behavior += " that appears to be packed or obfuscated (high entropy detected)";
-    if (hasNet) behavior += ". It contains network indicators suggesting C2 communication capability";
-    if (hasCrypto) behavior += ". Cryptographic patterns were detected which may indicate encryption or encoding routines";
-
-    behavior += `.\n\nKey findings:\n`;
-    behavior += `- ${result.instruction_count} instructions analyzed\n`;
-    behavior += `- ${result.string_count} strings extracted\n`;
-    behavior += `- ${result.mitre_techniques?.length || 0} MITRE ATT&CK techniques identified\n`;
-    behavior += `- ${result.iocs?.total || 0} IOCs extracted`;
-
-    return { text: behavior };
-  }
-
-  if (lowerQuery.includes("main") || lowerQuery.includes("entry")) {
-    const entryPoint = result.instructions[0]?.address;
-    const entryCode = result.instructions.slice(0, 10).map((i: { address: string; mnemonic: string; op_str: string }) =>
-      `${i.address}: ${i.mnemonic} ${i.op_str}`
-    ).join("\n");
-
-    return {
-      text: `The entry point is at ${entryPoint}. Here's the code at program start:`,
-      codeBlocks: [{ address: entryPoint, code: entryCode }],
-      highlights: [entryPoint]
-    };
-  }
-
-  if (lowerQuery.includes("suspicious") || lowerQuery.includes("malicious")) {
-    const suspicious = [];
-    if (result.analysis?.suspicious_patterns?.length > 0) {
-      suspicious.push(...result.analysis.suspicious_patterns.map((p: { type: string; address: string; pattern: string }) =>
-        `- ${p.type} at ${p.address}: ${p.pattern}`
-      ));
+  return parts.map((part, i) => {
+    if (part.startsWith("```") && part.endsWith("```")) {
+      const code = part.slice(3, -3).replace(/^[a-z]+\n/, "");
+      return (
+        <pre key={i} className="my-2 p-2 bg-bg-primary rounded text-[11px] font-mono overflow-x-auto">
+          {code}
+        </pre>
+      );
     }
-    if (result.mitre_techniques?.length > 0) {
-      suspicious.push("\nMITRE ATT&CK techniques detected:");
-      suspicious.push(...result.mitre_techniques.map((t: { id: string; name: string; tactic: string; evidence: string }) =>
-        `- ${t.id}: ${t.name} (${t.tactic}) - ${t.evidence}`
-      ));
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
     }
-
-    if (suspicious.length === 0) {
-      return { text: "No obviously suspicious patterns detected in static analysis. This doesn't mean the binary is safe - further dynamic analysis is recommended." };
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={i} className="px-1 py-0.5 bg-bg-primary rounded text-accent-cyan text-[11px]">
+          {part.slice(1, -1)}
+        </code>
+      );
     }
-
-    return {
-      text: "Suspicious indicators found:\n\n" + suspicious.join("\n"),
-      highlights: result.analysis?.suspicious_patterns?.map((p: { address: string }) => p.address) || []
-    };
-  }
-
-  if (lowerQuery.includes("string")) {
-    const strings = result.strings.slice(0, 15);
-    const formatted = strings.map((s: { offset: string; value: string }) => `${s.offset}: "${s.value}"`).join("\n");
-    return {
-      text: `Found ${result.string_count} strings. Here are the most notable ones:\n\n${formatted}`,
-      highlights: strings.map((s: { offset: string }) => s.offset)
-    };
-  }
-
-  if (lowerQuery.includes("encrypt") || lowerQuery.includes("crypto")) {
-    if (result.crypto?.count > 0) {
-      const findings = result.crypto.findings.map((f: { type: string; offset: string; confidence: number; pattern: string }) =>
-        `- ${f.type} detected at ${f.offset} (${Math.round(f.confidence * 100)}% confidence): ${f.pattern}`
-      ).join("\n");
-      return {
-        text: `Cryptographic patterns detected:\n\n${findings}`,
-        highlights: result.crypto.findings.map((f: { offset: string }) => f.offset)
-      };
-    }
-    return { text: "No standard cryptographic patterns detected. The binary may use custom or obfuscated encryption." };
-  }
-
-  if (lowerQuery.includes("mitre") || lowerQuery.includes("technique") || lowerQuery.includes("ttp")) {
-    if (result.mitre_techniques?.length > 0) {
-      const techniques = result.mitre_techniques.map((t: { id: string; name: string; tactic: string; evidence: string; confidence: number }) =>
-        `**${t.id}** - ${t.name}\n  Tactic: ${t.tactic}\n  Evidence: ${t.evidence}\n  Confidence: ${Math.round(t.confidence * 100)}%`
-      ).join("\n\n");
-      return { text: `MITRE ATT&CK Techniques Identified:\n\n${techniques}` };
-    }
-    return { text: "No MITRE ATT&CK techniques were identified with high confidence." };
-  }
-
-  if (lowerQuery.includes("yara")) {
-    const name = result.file_info.name.replace(/[^a-zA-Z0-9]/g, "_");
-    const strings = result.strings.slice(0, 5).map((s: { value: string }, i: number) =>
-      `    $s${i} = "${s.value.replace(/"/g, '\\"')}"`
-    ).join("\n");
-
-    const rule = `rule ${name}_detection {
-  meta:
-    description = "Auto-generated YARA rule for ${result.file_info.name}"
-    author = "AnalyzeBugger AI"
-    date = "${new Date().toISOString().split('T')[0]}"
-
-  strings:
-${strings}
-
-  condition:
-    2 of them
-}`;
-
-    return {
-      text: "Generated YARA rule based on extracted strings:",
-      codeBlocks: [{ address: "YARA", code: rule }]
-    };
-  }
-
-  if (lowerQuery.includes("network") || lowerQuery.includes("c2") || lowerQuery.includes("communication")) {
-    const urls = result.iocs?.urls || [];
-    const ips = result.iocs?.ips || [];
-    const domains = result.iocs?.domains || [];
-
-    if (urls.length + ips.length + domains.length === 0) {
-      return { text: "No network indicators found in static analysis. The binary may resolve addresses dynamically or use encoded/encrypted network strings." };
-    }
-
-    let response = "Network indicators found:\n\n";
-    if (urls.length > 0) response += "URLs:\n" + urls.map((u: { defanged?: string; value: string }) => `- ${u.defanged || u.value}`).join("\n") + "\n\n";
-    if (ips.length > 0) response += "IP Addresses:\n" + ips.map((i: { defanged?: string; value: string }) => `- ${i.defanged || i.value}`).join("\n") + "\n\n";
-    if (domains.length > 0) response += "Domains:\n" + domains.map((d: { defanged?: string; value: string }) => `- ${d.defanged || d.value}`).join("\n");
-
-    return { text: response };
-  }
-
-  if (lowerQuery.includes("explain") && lowerQuery.includes("0x")) {
-    const addrMatch = lowerQuery.match(/0x[0-9a-fA-F]+/);
-    if (addrMatch) {
-      const addr = addrMatch[0].toLowerCase();
-      const idx = result.instructions.findIndex((i: { address: string }) => i.address.toLowerCase() === addr);
-      if (idx >= 0) {
-        const context = result.instructions.slice(idx, idx + 10);
-        const code = context.map((i: { address: string; mnemonic: string; op_str: string }) => `${i.address}: ${i.mnemonic} ${i.op_str}`).join("\n");
-        return {
-          text: `Code at ${addr}:`,
-          codeBlocks: [{ address: addr, code }],
-          highlights: [addr]
-        };
-      }
-    }
-    return { text: "Could not find the specified address in the disassembly." };
-  }
-
-  // Default response
-  return {
-    text: `I analyzed your query about "${query}". Based on the ${result.file_info.arch} binary:\n\n` +
-          `This file contains ${result.instruction_count} instructions and ${result.string_count} strings. ` +
-          `The entropy is ${result.file_info.entropy} which suggests ${parseFloat(result.file_info.entropy) > 7 ? "possible packing/encryption" : "normal code/data distribution"}.\n\n` +
-          `Try asking more specific questions like:\n` +
-          `- "What MITRE techniques are present?"\n` +
-          `- "Show suspicious API calls"\n` +
-          `- "Generate a YARA rule"\n` +
-          `- "Explain the function at 0x0100"`
-  };
+    return <span key={i}>{part}</span>;
+  });
 }

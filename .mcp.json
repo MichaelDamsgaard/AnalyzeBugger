@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "analyzebugger": {
+      "command": "python",
+      "args": ["C:/Claude/tools/bip/analyzebugger/mcp-server/analyzebugger_mcp.py"]
+    }
+  }
+}

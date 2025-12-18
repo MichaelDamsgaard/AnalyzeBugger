@@ -24,6 +24,10 @@ reqwest = { version = "0.12", features = ["json"] }
 capstone = "0.12"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+# MCP HTTP API
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
 
 # Intel PT support (Windows driver interface)
 [target.'cfg(windows)'.dependencies]

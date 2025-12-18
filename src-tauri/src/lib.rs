@@ -3,8 +3,9 @@
 
 mod engine;
 mod intel_pt;
+mod mcp_api;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 use serde_json::json;
 use engine::session::SessionManager;
@@ -14,6 +15,7 @@ use intel_pt::IntelPTManager;
 pub struct AppState {
     session_manager: Mutex<SessionManager>,
     intel_pt_manager: Mutex<IntelPTManager>,
+    mcp_state: Arc<mcp_api::McpApiState>,
 }
 
 // ============================================================================
@@ -413,6 +415,9 @@ fn analyze_file(path: String) -> Result<String, String> {
     let imports = parse_pe_imports(&data);
     let exports = parse_pe_exports(&data);
 
+    // Generate raw hex dump for crypto analysis
+    let raw_bytes = generate_hex_dump(&data, base_address);
+
     // Detect patterns
     let file_info = json!({
         "name": std::path::Path::new(&path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
@@ -436,7 +441,8 @@ fn analyze_file(path: String) -> Result<String, String> {
         "initial_registers": initial_registers,
         "sections": sections,
         "imports": imports,
-        "exports": exports
+        "exports": exports,
+        "raw_bytes": raw_bytes
     });
 
     Ok(result.to_string())
@@ -548,6 +554,47 @@ fn calculate_entropy(data: &[u8]) -> f64 {
     }
 
     entropy
+}
+
+/// Generate hex dump with addresses for crypto analysis
+fn generate_hex_dump(data: &[u8], base_address: u64) -> String {
+    let mut lines = Vec::new();
+
+    // For small files, dump everything; for larger files, dump key regions
+    let regions: Vec<(usize, usize, &str)> = if data.len() <= 2048 {
+        vec![(0, data.len(), "Full dump")]
+    } else {
+        // Dump entry point area and data section hints
+        vec![
+            (0, 512.min(data.len()), "Entry region"),
+            (data.len().saturating_sub(512), data.len(), "End region"),
+        ]
+    };
+
+    for (start, end, label) in regions {
+        lines.push(format!("--- {} (0x{:04X}-0x{:04X}) ---", label, base_address + start as u64, base_address + end as u64 - 1));
+
+        for offset in (start..end).step_by(16) {
+            let addr = base_address + offset as u64;
+            let end_idx = (offset + 16).min(end);
+            let bytes = &data[offset..end_idx];
+
+            // Hex part
+            let hex: String = bytes.iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            // ASCII part
+            let ascii: String = bytes.iter()
+                .map(|&b| if b >= 0x20 && b < 0x7F { b as char } else { '.' })
+                .collect();
+
+            lines.push(format!("{:04X}: {:<48} |{}|", addr, hex, ascii));
+        }
+    }
+
+    lines.join("\n")
 }
 
 // ============================================================================
@@ -1479,15 +1526,110 @@ fn get_initial_registers(arch_mode: ArchMode, base_address: u64) -> serde_json::
 // Tauri Commands - Claude AI
 // ============================================================================
 
+use std::sync::OnceLock;
+
+/// Runtime API key cache (loaded from disk or set via UI)
+static RUNTIME_API_KEY: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn get_runtime_key_store() -> &'static Mutex<Option<String>> {
+    RUNTIME_API_KEY.get_or_init(|| {
+        // Try to load from disk on first access
+        Mutex::new(load_api_key_from_disk())
+    })
+}
+
+/// Get the config file path for storing the API key
+fn get_api_key_path() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|p| p.join("analyzebugger").join("api_key"))
+}
+
+/// Load API key from disk
+fn load_api_key_from_disk() -> Option<String> {
+    let path = get_api_key_path()?;
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|k| !k.is_empty() && k.starts_with("sk-ant-api"))
+}
+
+/// Save API key to disk
+fn save_api_key_to_disk(key: &str) -> Result<(), String> {
+    let path = get_api_key_path().ok_or("Could not determine config directory")?;
+
+    // Create parent directory if needed
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    std::fs::write(&path, key)
+        .map_err(|e| format!("Failed to save API key: {}", e))?;
+
+    eprintln!("[API Key] Saved to {:?}", path);
+    Ok(())
+}
+
+/// Get API key - checks runtime cache, disk, then environment variable
+fn get_api_key() -> Option<String> {
+    // First check runtime cache
+    if let Ok(guard) = get_runtime_key_store().lock() {
+        if let Some(ref key) = *guard {
+            if !key.is_empty() {
+                return Some(key.clone());
+            }
+        }
+    }
+    // Fall back to environment variable
+    std::env::var("ANTHROPIC_API_KEY").ok().filter(|k| !k.is_empty())
+}
+
+/// Check if API key is configured
+#[tauri::command]
+fn has_api_key() -> bool {
+    get_api_key().is_some()
+}
+
+/// Set API key (stores in memory AND persists to disk)
+#[tauri::command]
+fn set_api_key(key: String) -> Result<bool, String> {
+    if key.is_empty() {
+        return Err("API key cannot be empty".to_string());
+    }
+    if !key.starts_with("sk-ant-api") {
+        return Err("Invalid API key format. Key should start with 'sk-ant-api'".to_string());
+    }
+
+    // Save to disk for persistence
+    save_api_key_to_disk(&key)?;
+
+    // Update runtime cache
+    let store = get_runtime_key_store();
+    let mut guard = store.lock().map_err(|e| e.to_string())?;
+    *guard = Some(key);
+    Ok(true)
+}
+
+
+
 #[tauri::command]
 async fn ask_claude(prompt: String, context: String) -> Result<String, String> {
-    // For now, return a placeholder
-    // In production, this would call the Claude API
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+    eprintln!("[ask_claude] Called with prompt length: {}", prompt.len());
 
-    if api_key.is_none() {
-        return Ok("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable to enable AI features.".to_string());
-    }
+    // Get API key from environment (OAuth not supported by Anthropic API)
+    let api_key = match get_api_key() {
+        Some(key) => key,
+        None => {
+            return Ok("**API Key Required**
+
+The Anthropic API requires an API key.
+
+To enable AI analysis:
+1. Get an API key from https://console.anthropic.com/
+2. Set the environment variable:
+   PowerShell: $env:ANTHROPIC_API_KEY = 'sk-ant-api...'
+3. Restart AnalyzeBugger".to_string());
+        }
+    };
 
     let client = reqwest::Client::new();
 
@@ -1498,7 +1640,11 @@ async fn ask_claude(prompt: String, context: String) -> Result<String, String> {
             {
                 "role": "user",
                 "content": format!(
-                    "You are an expert reverse engineer analyzing a binary. Here is the current debugging context:\n\n{}\n\nUser question: {}",
+                    "You are an expert reverse engineer analyzing a binary. Here is the current debugging context:
+
+{}
+
+User question: {}",
                     context,
                     prompt
                 )
@@ -1506,17 +1652,28 @@ async fn ask_claude(prompt: String, context: String) -> Result<String, String> {
         ]
     });
 
+    // Make API request with API key
     let response = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key.unwrap())
+        .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("API request failed: {}", e))?;
 
-    let response_json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    let response_json: serde_json::Value = response.json().await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    // Check for API errors
+    if !status.is_success() {
+        if let Some(error) = response_json["error"]["message"].as_str() {
+            return Err(format!("Claude API error: {}", error));
+        }
+        return Err(format!("Claude API returned status {}", status));
+    }
 
     if let Some(content) = response_json["content"].as_array() {
         if let Some(text) = content.first().and_then(|c| c["text"].as_str()) {
@@ -1527,7 +1684,7 @@ async fn ask_claude(prompt: String, context: String) -> Result<String, String> {
     Err("Failed to parse Claude response".to_string())
 }
 
-// ============================================================================
+// ================================================================================
 // Tauri Commands - Intel PT
 // ============================================================================
 
@@ -1720,9 +1877,27 @@ pub fn run() {
         eprintln!("Intel PT: Not available on this system");
     }
 
+    // Initialize MCP API state
+    // Project root is the AnalyzeBugger source directory for self-modification
+    let project_root = std::env::var("ANALYZEBUGGER_PROJECT_ROOT")
+        .unwrap_or_else(|_| "C:/Claude/tools/bip/analyzebugger".to_string());
+    let mcp_state = Arc::new(mcp_api::McpApiState::new(project_root));
+
+    // Start MCP API server in background
+    let mcp_state_clone = mcp_state.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for MCP API");
+        rt.block_on(async {
+            if let Err(e) = mcp_api::start_server((*mcp_state_clone).clone()).await {
+                eprintln!("[MCP API] Server error: {}", e);
+            }
+        });
+    });
+
     let app_state = AppState {
         session_manager: Mutex::new(session_manager),
         intel_pt_manager: Mutex::new(intel_pt_manager),
+        mcp_state,
     };
 
     tauri::Builder::default()
@@ -1745,6 +1920,8 @@ pub fn run() {
             set_breakpoint,
             remove_breakpoint,
             ask_claude,
+            has_api_key,
+            set_api_key,
             analyze_file,
             // Intel PT commands
             get_intel_pt_status,
