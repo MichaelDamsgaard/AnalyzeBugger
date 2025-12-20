@@ -487,6 +487,51 @@ def tool_trace_binary(file_path: str, input_data: str = "",
     # Run and trace
     trace = tracer.run(max_instructions=max_instructions)
 
+    # Compute instruction statistics for crypto analysis
+    instruction_stats = {
+        'xor': 0,
+        'rol': 0,
+        'ror': 0,
+        'add': 0,
+        'sub': 0,
+        'and': 0,
+        'or': 0,
+        'shl': 0,
+        'shr': 0,
+        'loop': 0,
+    }
+    xor_locations = []
+    rol_locations = []
+
+    for insn in trace.instructions:
+        mnem = insn.mnemonic.lower()
+        if mnem == 'xor':
+            instruction_stats['xor'] += 1
+            if len(xor_locations) < 20:  # Keep first 20
+                xor_locations.append(hex(insn.address))
+        elif mnem == 'rol':
+            instruction_stats['rol'] += 1
+            if len(rol_locations) < 20:
+                rol_locations.append(hex(insn.address))
+        elif mnem == 'ror':
+            instruction_stats['ror'] += 1
+            if len(rol_locations) < 20:
+                rol_locations.append(hex(insn.address))
+        elif mnem == 'add':
+            instruction_stats['add'] += 1
+        elif mnem == 'sub':
+            instruction_stats['sub'] += 1
+        elif mnem == 'and':
+            instruction_stats['and'] += 1
+        elif mnem == 'or':
+            instruction_stats['or'] += 1
+        elif mnem in ['shl', 'sal']:
+            instruction_stats['shl'] += 1
+        elif mnem in ['shr', 'sar']:
+            instruction_stats['shr'] += 1
+        elif mnem in ['loop', 'loope', 'loopne']:
+            instruction_stats['loop'] += 1
+
     # Format results
     return {
         'success': True,
@@ -498,6 +543,10 @@ def tool_trace_binary(file_path: str, input_data: str = "",
         'exit_address': hex(trace.exit_address),
         'output': tracer.get_output().decode('latin-1', errors='replace'),
         'final_registers': {k: hex(v) for k, v in trace.final_registers.items()},
+        # Crypto-relevant instruction statistics
+        'instruction_stats': instruction_stats,
+        'xor_locations': xor_locations,
+        'rol_ror_locations': rol_locations,
         # Include last N instructions for immediate analysis
         'last_instructions': [
             {
