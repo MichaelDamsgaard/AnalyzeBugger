@@ -74,3 +74,66 @@
 .current-instruction {
   background-color: rgba(86, 156, 214, 0.3);
 }
+
+/* Matrix/Minority Report style effects */
+.matrix-glow-cyan {
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.3),
+              0 0 30px rgba(0, 255, 255, 0.1),
+              inset 0 0 10px rgba(0, 255, 255, 0.05);
+}
+
+.matrix-glow-green {
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.3),
+              0 0 30px rgba(0, 255, 0, 0.1),
+              inset 0 0 10px rgba(0, 255, 0, 0.05);
+}
+
+.matrix-glow-purple {
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.3),
+              0 0 30px rgba(168, 85, 247, 0.1),
+              inset 0 0 10px rgba(168, 85, 247, 0.05);
+}
+
+/* Animated data pulse */
+@keyframes data-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.data-pulse {
+  animation: data-pulse 1.5s ease-in-out infinite;
+}
+
+/* Scanning line effect */
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+.scan-line::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.5), transparent);
+  animation: scan-line 3s ease-in-out infinite;
+}
+
+/* Floating pane header gradient */
+.matrix-header {
+  background: linear-gradient(90deg,
+    rgba(0, 255, 255, 0.1) 0%,
+    rgba(0, 0, 0, 0.5) 50%,
+    rgba(0, 255, 255, 0.1) 100%
+  );
+}
+
+/* Grid overlay for hex views */
+.hex-grid {
+  background-image:
+    linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+}

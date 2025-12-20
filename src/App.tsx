@@ -23,6 +23,7 @@ import { PatchEditor } from "./components/debug/PatchEditor";
 // import { ChatPanel } from "./components/claude/ChatPanel";
 import { NarrativePanel, MitrePanel, IocPanel, AnalysisSidebar } from "./components/analysis";
 import { SemanticAnalyzer, AIQueryPanel, ReportGenerator, VulnerabilityScanner, AutoLabeler, AutonomousAnalyst, FunctionSimilarity, BehavioralPredictor } from "./components/ai";
+import { PaneManager } from "./components/matrix";
 import { useSessionStore } from "./stores/sessionStore";
 
 type MainTab = "disasm" | "hex" | "memory" | "strings" | "patch";
@@ -53,6 +54,7 @@ function App() {
   }, [status?.session]);
 
   return (
+    <PaneManager>
     <div className="h-screen w-screen flex flex-col bg-bg-primary text-text-primary font-mono">
       {/* Toolbar */}
       <Toolbar />
@@ -350,6 +352,7 @@ function App() {
       {/* Status Bar */}
       <StatusBar />
     </div>
+    </PaneManager>
   );
 }
 
